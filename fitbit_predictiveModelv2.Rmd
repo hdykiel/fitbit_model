@@ -1,0 +1,126 @@
+---
+title: "Predicting Proper Exercise Technique From Personal Wareable Device Data"
+author: "Hadrien Dykiel"
+date: "Septempber 24, 2016"
+output: pdf_document
+---
+
+## Executive Summary
+Data collected from wearable devices like fitbit can be used to predict if the owner of the device is using proper form during weight-lifting exercises. The ability to determine when someone is doing an exercise incorrectly and subsequently notify them can help prevent serious injury, bettering the health of individuals and avoiding costly medical services. This paper includes the model we have developped as well as the methodology for how it was built.
+
+##System
+This analysis was run with the following system specifications:
+```{r system}
+#Load required packages
+library(caret)
+library(rpart)
+R.Version()
+
+```
+
+
+##Exploratory Analysis
+Our data contains 160 variables, incuding our target variable. Before we begin to build our model, it's a good idea to learn a little bit more about our data. We begin by printing the variable names along with their class and sample values. 
+
+```{r EDA, cache = TRUE}
+#Load training & test data sets
+df <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", na.strings=c("NA","#DIV/0!",""))
+test <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", na.strings=c("NA","#DIV/0!",""))
+
+#Inspect data
+str(df)
+
+#Correlation
+# cor(df)
+
+#Print possible values for target var
+unique(df$classe)
+```
+Our target variable is categorical, so a decision tree type model will be a good start. 
+
+##Methodology
+We begin by splitting our data into a training and test set (called validation) so we can cross-validate our model. We also remove variables that contain only NAs since they do not have any predictive power.
+
+```{r}
+#Remove columns in the test table that are entirely NAs
+df <- df[ ,colSums(is.na(df)) != nrow(df)]
+test <- test[ ,colSums(is.na(test)) != nrow(test)]
+
+#Remove the same columns for the test set
+test <- test[ ,which(names(test) %in% names(df))]
+
+#Remove columns in df that are also not in test set
+df <- df[ ,which(names(df) %in% c(names(test), "classe"))]
+
+#Data partition
+index <- createDataPartition(df$classe, times=1, p=0.5)[[1]]
+training <- df[index, ]
+validation <- df[-index, ]
+
+```
+
+
+Next, we create a decision tree model with the default specifications. Because our target variable 'classe' is a factor, we use the method 'class' for building model and a confusion matrix to evaluate it.
+
+```{r decisionTree}
+#Model
+tree <- rpart(classe ~ ., data=training, method="class")
+
+#Predict
+pred1 <- predict(tree, validation, type = "class")
+
+#Evaluate the model
+confusionMatrix(validation$classe, pred1)
+
+```
+
+Our model proved to be accurate on this validation set, however it might perform differently on other test sets. Cross-validation can be used to get a better estimate of our model's performance. It entails training our model mutliple times, using the same specifications, each time using a different section of our data as our test or validation data set.  It is typical to use 5-fold validation, where we'll create 5 different models and average the model performance measures, like accuracy, to give us a better idea of how good our model actually is. The goal is to then tune our model to maximize the average performance measures. In some cases, a blended model can be created but it is out of the scope of this exercise. Instead, our goal is to use cross-validation to simply validate our model's performance. Although some cross-validation functions exist in R, we will write our own function to explicitly show how cross-validation works.
+
+```{r cross-validate }
+#Set random seed for reproducibility
+set.seed(123)
+
+#Initialize the accs vector
+accs <- rep(0,6)
+
+#Shuffle the dataframe in case it was sorted in any particular order
+n <- nrow(df)
+shuffled <- df[sample(n),]
+
+for (i in 1:6) {
+  # These indices indicate the interval of the test set
+  indices <- (((i-1) * round((1/6)*nrow(shuffled))) + 1):((i*round((1/6) * nrow(shuffled))))
+  
+  # Exclude them from the train set
+  train <- shuffled[-indices,]
+  
+  # Include them in the test set
+  validation <- shuffled[indices,]
+  
+  # A model is learned using each training set
+  tree <- rpart(classe ~ ., train, method = "class")
+  
+  # Make a prediction on the test set using tree
+ pred <- predict(tree, validation, type="class")
+  
+  # Assign the confusion matrix to conf
+conf <- table(validation$classe, pred)
+  
+  # Assign the accuracy of this model to the ith index in accs
+  accs[i] <- sum(diag(conf))/sum(conf)
+}
+
+# Print out the mean of accs
+meanAccuracy <- mean(accs)
+print(meanAccuracy)
+
+```
+
+Our model has a mean accuracy of `r meanAccuracy`. Although our model could be further optimized, the current model is sufficient for our purposes. Let's apply it to our test set:
+
+```{r test prediction}
+predTest <- predict(tree, test)
+results <- data.frame(test$user_name, prediction = predTest)
+print(results)
+```
+
